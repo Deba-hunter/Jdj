@@ -1,16 +1,12 @@
 const express = require('express');
 const fs = require('fs');
 const multer = require('multer');
-const { Boom } = require('@hapi/boom');
-const { makeWASocket, useSingleFileAuthState, delay } = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode-terminal');
 const path = require('path');
+const qrcode = require('qrcode-terminal');
+const { makeWASocket, useMultiFileAuthState, delay } = require('@whiskeysockets/baileys');
 
 const app = express();
 const port = process.env.PORT || 3000;
-
-const { state, saveState } = useSingleFileAuthState('./session/session.json');
-let sock;
 
 app.use(express.static('views'));
 app.use(express.json());
@@ -22,31 +18,42 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// QR Code Login + Socket Setup
+let sock;
+
 async function connectToWhatsApp() {
+  const { state, saveCreds } = await useMultiFileAuthState('session');
+
   sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true
+    printQRInTerminal: true,
   });
 
-  sock.ev.on('connection.update', ({ connection, qr }) => {
-    if (qr) qrcode.generate(qr, { small: true });
+  sock.ev.on('connection.update', ({ connection, qr, lastDisconnect }) => {
+    if (qr) {
+      qrcode.generate(qr, { small: true });
+    }
+
     if (connection === 'close') {
+      console.log('Reconnecting...');
       connectToWhatsApp();
+    }
+
+    if (connection === 'open') {
+      console.log('✅ Connected to WhatsApp');
     }
   });
 
-  sock.ev.on('creds.update', saveState);
+  sock.ev.on('creds.update', saveCreds);
 }
 
 connectToWhatsApp();
 
-// Serve HTML page
+// Serve HTML UI
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/views/index.html');
 });
 
-// Upload and Start Messaging
+// Start Auto Messaging
 app.post('/start', upload.single('messageFile'), async (req, res) => {
   const number = req.body.number;
   const delaySec = parseInt(req.body.delay) * 1000;
@@ -69,10 +76,10 @@ app.post('/start', upload.single('messageFile'), async (req, res) => {
     }
   }
 
-  sendLoop(); // Infinite loop
-  res.send('Message sending started!');
+  sendLoop(); // Run infinite loop
+  res.send('✅ Auto messaging started!');
 });
 
 app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
+  console.log(`🚀 Server running on http://localhost:${port}`);
 });
